@@ -8,39 +8,20 @@ from data.libs.email_validator import ValidationResult, EmailValidator
 
 class DataGather:
 
+    MAX_LOG_LINES = 100
+
     _BASE_DIR = Path(__file__).parent.resolve()
     _DEFAULT_LOG_NAME = "history.json"
-    _MAX_LOG_LINES = 100
     _MAX_RETRIES = 3
     _RETRY_DELAY = 0.1
 
 
-    def __init__(self, log_name: str = None):
+    def __init__(self, log_name: str | None = None):
 
         self.email_validator = EmailValidator()
         self._log_name = log_name if log_name else self._DEFAULT_LOG_NAME
         self._fast_history_json = self._set_fast_history_json_path()
         self._slow_history_json = self._set_slow_history_json_path()
-
-
-    def _set_fast_history_json_path(self):
-        """Устанавливаем путь к быстрому логу"""
-
-
-        # имя файла
-        fast_history_json_filename = f"{self._log_name}l"
-
-        # если структура проекта не нарушена, то устанавливаем путь к файлу в папку data, если нарушена, то в текущую
-        parts = self._BASE_DIR.parts
-        if len(parts) >= 2 and parts[-2].lower() == "data" and parts[-1].lower() == "libs":
-            # структура соблюдена: пишем в (data/)
-            data_dir = self._BASE_DIR.parent
-            if not data_dir.exists():
-                raise FileNotFoundError(f"Ожидаемая директория для быстрого лога '{data_dir}' не существует")
-            return data_dir / fast_history_json_filename
-
-        # структура проекта нарушена: пишем в текущую директорию
-        return self._BASE_DIR / fast_history_json_filename
 
 
     def check_email(self, email: str) -> dict[str, str]:
@@ -66,25 +47,52 @@ class DataGather:
         }
 
 
-    def _write_to_file(self, data, file_path: Path, method):
-
-        for attempt in range(self._MAX_RETRIES):
-            try:
-                with open(file_path, method, encoding="utf-8") as f:
-                    f.write(data)
-
-                return  # Успешно — выходим
-
-            except (OSError, PermissionError) as e:
-                if attempt == self._MAX_RETRIES - 1:
-
-                    raise RuntimeError(
-                        f"Не удалось записать данные в '{file_path.name}' после {self._MAX_RETRIES} попыток: {e}"
-                    )
-                time.sleep(self._RETRY_DELAY)
+    def single_checking(self, email) -> dict[str, str]:
+        """Проверяет одиночный введенный пользователем email"""
+        result = self.check_email(email)
+        self._write_fast_log(result)
+        self._write_slow_log()
+        return result
 
 
-    def write_fast_log(self, record: dict) -> None:
+    def multiple_checking(self, path_file: str) -> list[dict[str, str]]:
+        """Проверяет файл с содержащимся списком email"""
+
+        multiple_result = list()
+        try:
+            with open(path_file, "r", encoding="utf-8") as f:
+                for line_num, line in enumerate(f, 1):
+                    email = line.strip()
+                    result = self.check_email(email)
+                    self._write_fast_log(result)
+                    multiple_result.append(result)
+
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Файл с email-адресами не найден: {path_file}")
+
+        except OSError as e:
+            raise OSError(f"Ошибка при чтении файла {path_file}: {e}")
+
+        # Перезаписываем медленный лог после обработки всех email
+        self._write_slow_log()
+
+        return multiple_result[-self.MAX_LOG_LINES:]
+
+
+    def get_history(self):
+
+        try:
+            with open(self._slow_history_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                else:
+                    return []
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+
+    def _write_fast_log(self, record: dict) -> None:
 
         values = list(record.values())
         line = json.dumps(values, ensure_ascii=False) + "\n"
@@ -92,7 +100,7 @@ class DataGather:
         self._write_to_file(line, self._fast_history_json, "a")
 
 
-    def write_slow_log(self):
+    def _write_slow_log(self):
         """Перезапись slow-лога последними записями из fast-лога"""
 
         # читаем все строки из fast-лога (как текст, без парсинга)
@@ -103,7 +111,7 @@ class DataGather:
             return  # Если fast-лога нет — ничего не делаем
 
         # берём последние _MAX_LOG_LINES строк
-        last_lines = all_lines[-self._MAX_LOG_LINES:] if all_lines else []
+        last_lines = all_lines[-self.MAX_LOG_LINES:] if all_lines else []
 
         # Обрезаем fast-лог: оставляем только последние _MAX_LOG_LINES строк
         if last_lines:
@@ -126,31 +134,43 @@ class DataGather:
             self._write_to_file(data_fast, self._fast_history_json, "w")
 
 
-    def single_checking(self, email):
-        """Проверяет одиночный введенный пользователем email"""
-        result = self.check_email(email)
-        self.write_fast_log(result)
-        self.write_slow_log()
+    def _write_to_file(self, data, file_path: Path, method):
+
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                with open(file_path, method, encoding="utf-8") as f:
+                    f.write(data)
+
+                return  # Успешно — выходим
+
+            except (OSError, PermissionError) as e:
+                if attempt == self._MAX_RETRIES - 1:
+
+                    raise RuntimeError(
+                        f"Не удалось записать данные в '{file_path.name}' после {self._MAX_RETRIES} попыток: {e}"
+                    )
+                time.sleep(self._RETRY_DELAY)
 
 
-    def multiple_checking(self, path_file: str):
-        """Проверяет файл с содержащимся списком email"""
-        try:
-            with open(path_file, "r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, 1):
-                    email = line.strip()
-                    result = self.check_email(email)
-                    self.write_fast_log(result)
+    def _set_fast_history_json_path(self):
+        """Устанавливаем путь к быстрому логу"""
 
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Файл с email-адресами не найден: {path_file}")
-        except OSError as e:
-            raise OSError(f"Ошибка при чтении файла {path_file}: {e}")
+        # имя файла
+        fast_history_json_filename = f"{self._log_name}l"
 
-        # Перезаписываем медленный лог после обработки всех email
-        self.write_slow_log()
+        # если структура проекта не нарушена, то устанавливаем путь к файлу в папку data, если нарушена, то в текущую
+        parts = self._BASE_DIR.parts
+        if len(parts) >= 2 and parts[-2].lower() == "data" and parts[-1].lower() == "libs":
+            # структура соблюдена: пишем в (data/)
+            data_dir = self._BASE_DIR.parent
+            if not data_dir.exists():
+                raise FileNotFoundError(f"Ожидаемая директория для быстрого лога '{data_dir}' не существует")
+            return data_dir / fast_history_json_filename
 
-    
+        # структура проекта нарушена: пишем в текущую директорию
+        return self._BASE_DIR / fast_history_json_filename
+
+
     def _set_slow_history_json_path(self):
         """Устанавливаем путь к медленному логу"""
 
@@ -168,3 +188,4 @@ class DataGather:
 
         # структура проекта нарушена: пишем в текущую директорию
         return self._BASE_DIR / slow_history_json_filename
+
