@@ -174,7 +174,10 @@ class EmailValidator:
         if not self._regex_local.fullmatch(local):
             return ValidationResult(
                 False,
-                f"Локальная часть '{local}' не соответствует ожидаемой структуре: {self._regex_local.pattern}"
+                (
+                    f"Локальная часть '{local}' не соответствует ожидаемой структуре "
+                    f"локальной части паттерна: {self._regex_local.pattern}"
+                )
             )
 
         return self._DEFAULT_OK
@@ -212,7 +215,10 @@ class EmailValidator:
         if not self._regex_domain.fullmatch(domain):
             return ValidationResult(
                 False,
-                f"Доменная часть '{domain}' не соответствует ожидаемой структуре: {self._regex_domain.pattern}"
+                (
+                    f"Доменная часть '{domain}' не соответствует ожидаемой структуре "
+                    f"доменной части паттерна: {self._regex_domain.pattern}"
+                )
             )
 
         return self._DEFAULT_OK
@@ -227,3 +233,4 @@ class EmailValidator:
                 f"Полный email '{email}' не соответствует шаблону: {self._regex_email.pattern}"
             )
         return self._DEFAULT_OK
+    

@@ -1,4 +1,3 @@
-
 import json
 import time
 from pathlib import Path
@@ -406,4 +405,3 @@ class DataGather:
 
         # структура проекта нарушена: пишем в текущую директорию
         return self._BASE_DIR / slow_history_json_filename
-

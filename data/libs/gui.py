@@ -8,7 +8,7 @@ class EmailValidatorGUI:
     Строит окно с тремя зонами:
     - панель выбора типа проверки (кнопки «Одиночная проверка» и «Множественная проверка»);
     - поле ввода контрольного регулярного выражения;
-    - вкладки «Последний результат» и «История проверок» с таблицами (Treeview),
+    - вкладки «Результат текущей проверки» и «История проверок» с таблицами (Treeview),
       включающими колонки: дата/время, email, результат, причина.
 
     Класс не выполняет проверки сам: методы single_checking и multiple_checking —
@@ -50,8 +50,6 @@ class EmailValidatorGUI:
         self.root.title("Email Validator")
         self.root.geometry(f"{self._WIDTH}x{self._HEIGHT}")
         self.root.minsize(self._MIN_WIDTH, self._MIN_HEIGHT)
-        # self.root.rowconfigure(1, weight=1)   # Вкладки растягиваются
-        self.root.rowconfigure(1)   # Вкладки растягиваются
         self.root.columnconfigure(0, weight=1)
 
         # КОНТЕЙНЕР ПРОВЕРОК
@@ -87,7 +85,7 @@ class EmailValidatorGUI:
 
         # Вкладка последнего результата
         self.results_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.results_tab, text=" Последний результат ")
+        self.notebook.add(self.results_tab, text=" Результат текущей проверки ")
 
         # Вкладка истории
         self.history_tab = ttk.Frame(self.notebook)
@@ -125,7 +123,7 @@ class EmailValidatorGUI:
         DataGather) с выводом результатов в таблицу через add_result_row
         и в историю через add_history_row.
         """
-        
+
         messagebox.showinfo(
             "Не реализовано",
             "Переписать в дочернем классе метод множественной проверки email"
@@ -133,7 +131,7 @@ class EmailValidatorGUI:
 
     def add_result_row(self, values: list, max_rows: int = 0) -> None:
         """
-        Добавляет строку в таблицу «Последний результат».
+        Добавляет строку в таблицу «Результат текущей проверки».
 
         Делегирует добавление в _add_row_to_tree.
 
@@ -160,10 +158,10 @@ class EmailValidatorGUI:
     @staticmethod
     def clear_tree(tree: ttk.Treeview) -> None:
         """
-            Полностью очищает таблицу от всех строк.
+        Полностью очищает таблицу от всех строк.
 
-            Args:
-                tree (ttk.Treeview): таблица, которую нужно очистить.
+        Args:
+            tree (ttk.Treeview): таблица, которую нужно очистить.
         """
         tree.delete(*tree.get_children())
 
@@ -200,6 +198,10 @@ class EmailValidatorGUI:
         (2, 3, 2, 5) от _WIDTH, подключает вертикальный и горизонтальный скроллбары
         и настраивает растягивание таблицы внутри вкладки.
 
+        Перетаскивание разделителей колонок и отпускание кнопки мыши принудительно
+        обновляют горизонтальный скроллбар (ограничение стандартного поведения Tk);
+        двойной клик по ячейке открывает полную запись через _show_record.
+
         Args:
             tab (ttk.Frame): контейнер вкладки, в который помещается таблица.
             name (str): имя атрибута экземпляра, в который сохраняется созданное дерево
@@ -231,9 +233,38 @@ class EmailValidatorGUI:
         vsb.grid(row=0, column=1, sticky=tk.NS)
         hsb.grid(row=1, column=0, sticky=tk.EW)
 
+        # Форсируем обновление горизонтального скроллбара при перетаскивании
+        # разделителей колонок: Tk сам не оповещает xscrollcommand об этом
+        tree.bind(
+            "<B1-Motion>",
+            lambda event: event.widget.xview_moveto(event.widget.xview()[0])
+        )
+        tree.bind(
+            "<ButtonRelease-1>",
+            lambda event: event.widget.xview_moveto(event.widget.xview()[0])
+        )
+        tree.bind("<Double-1>", self._show_record)
+
         # Настройка весов для контейнера
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
 
         setattr(self, name, tree)
 
+
+    def _show_record(self, event) -> None:
+        """
+        Показывает полную запись таблицы в окне сообщения (по двойному клику).
+
+        Args:
+            event: событие tkinter; widget события — таблица, в которой кликнули.
+        """
+        tree = event.widget
+        if tree.identify("region", event.x, event.y) != "cell":
+            return
+        item_id = tree.focus()
+        if not item_id:
+            return
+        values = tree.item(item_id, "values")
+        text = "\n".join(f"{col}: {val}" for col, val in zip(tree["columns"], values))
+        messagebox.showinfo("Полная запись", text)

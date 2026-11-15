@@ -7,6 +7,24 @@ from data.libs.file_processing import DataGather
 
 
 class EmailValidatorGuiFunctions(EmailValidatorGUI):
+    """
+    Функциональный наследник GUI-каркаса: подключает реальную валидацию через DataGather.
+
+    Переопределяет заглушки single_checking и multiple_checking:
+    - single_checking запрашивает email через диалог ввода, применяет контрольное
+      регулярное выражение из поля pattern_entry и выводит результат в таблицу
+      «Последний результат», после чего обновляет вкладку «История проверок»;
+    - multiple_checking запрашивает файл с email-адресами через диалог выбора файла,
+      проверяет все адреса пакетно и выводит результаты (до MAX_LOG_LINES записей)
+      в таблицу «Последний результат», затем обновляет историю.
+
+    При ошибке инициализации DataGather показывает сообщение и завершает
+    приложение. История отображается из slow-лога DataGather: в таблицу попадают
+    только записи-списки ровно из четырёх значений [timestamp, email, status, reason].
+
+    Attributes:
+        data (DataGather): объект логики валидации и ведения истории проверок.
+    """
 
     def __init__(self, root: tk.Tk) -> None:
         """
@@ -23,7 +41,7 @@ class EmailValidatorGuiFunctions(EmailValidatorGUI):
         super().__init__(root)
         try:
             self.data = DataGather()
-        except (FileNotFoundError, RuntimeError) as e:
+        except (FileNotFoundError) as e:
             messagebox.showerror("Ошибка инициализации", f"Не удалось подготовить лог-файлы: {e}")
             root.destroy()
             raise
@@ -31,15 +49,15 @@ class EmailValidatorGuiFunctions(EmailValidatorGUI):
         self._fill_history_tree()
         
 
-    def single_checking(self):
+    def single_checking(self) -> None:
         """
         Проверяет одиночный email, введённый пользователем в диалоговом окне.
 
         Порядок действий:
-        1. Запрашивает email через диалог ввода (simpledialog); при отмене — выход.
-        2. Применяет к валидатору регулярное выражение из поля pattern_entry;
-        при некорректном паттерне показывает сообщение об ошибке и выход,
-        не выполняя проверку.
+        1. Считывает контрольное регулярное выражение из поля pattern_entry и применяет
+        его к валидатору; при некорректном паттерне показывает сообщение об ошибке
+        и выходит, не открывая диалог ввода.
+        2. Запрашивает email через диалог ввода (simpledialog); при отмене — выход.
         3. Выполняет проверку через DataGather.single_checking (результат попадает
         в оба лога).
         4. Очищает таблицу «Последний результат» и добавляет одну строку результата;
@@ -54,23 +72,48 @@ class EmailValidatorGuiFunctions(EmailValidatorGUI):
             self.data.email_validator.set_pattern(pattern)
         except (ValueError, re.error) as e:
             messagebox.showerror(
-                "Некорректное регулярное выражение", 
+                "Некорректное контрольное регулярное выражение", 
                 f"Не удалось применить паттерн: {e}"
             )
             return
-
         email = simpledialog.askstring("Ввод email", "Введите email для проверки:")
         if email is None:
             return
-
         result = self.data.single_checking(email)
-
         self.clear_tree(self.results_tree)
         self.add_result_row(list(result.values()), self.data.MAX_LOG_LINES)
         self._fill_history_tree()
 
 
-    def multiple_checking(self):
+    def multiple_checking(self) -> None:
+        """
+        Выполняет пакетную проверку email-адресов из файла, выбранного пользователем.
+
+        Порядок действий:
+        1. Считывает контрольное регулярное выражение из поля pattern_entry и применяет
+        его к валидатору; при некорректном паттерне показывает сообщение об ошибке
+        и выходит, не открывая диалог выбора файла.
+        2. Открывает диалог выбора текстового файла; при отмене (пустой путь) — выход.
+        3. Выполняет пакетную проверку через DataGather.multiple_checking (все результаты
+        записываются в логи); при ошибке доступа к файлу показывает сообщение
+        об ошибке и выходит.
+        4. Очищает таблицу «Последний результат» и добавляет строки результатов
+        (не более MAX_LOG_LINES, ограничение уже применено в DataGather);
+        обновляет таблицу истории.
+
+        Returns:
+            None
+        """
+        pattern = self.pattern_entry.get()
+        try:
+            self.data.email_validator.set_pattern(pattern)
+        except (ValueError, re.error) as e:
+            messagebox.showerror(
+                "Некорректное контрольное регулярное выражение", 
+                f"Не удалось применить паттерн: {e}"
+            )
+            return
+
         filepath = filedialog.askopenfilename(
             title="Выберите файл с email-адресами",
             filetypes=[("Текстовые файлы", "*.txt"), ("Все файлы", "*.*")]
@@ -78,39 +121,50 @@ class EmailValidatorGuiFunctions(EmailValidatorGUI):
         if not filepath:
             return
 
-        pattern = self.pattern_entry.get()
-        self.data.email_validator.set_pattern(pattern)
-
-        result_list = self.data.multiple_checking(filepath)
+        try:
+            result_list = self.data.multiple_checking(filepath)
+        except (FileNotFoundError, OSError) as e:
+            messagebox.showerror(
+                "Ошибка чтения файла",
+                f"Не удалось прочитать файл с email-адресами: {e}"
+            )
+            return
 
         self.clear_tree(self.results_tree)
         for row in result_list:
-            if isinstance(row, dict):
-                added_row = list(row.values())
-                self.add_result_row(added_row)
+            self.add_result_row(list(row.values()))
 
         self._fill_history_tree()
+            
 
-    def _fill_history_tree(self):
+    def _fill_history_tree(self) -> None:
+        """
+        Обновляет таблицу «История проверок» данными из slow-лога DataGather.
+
+        Полностью очищает таблицу истории, затем читает get_history и заполняет
+        её построчно. Если история пуста или недоступна — таблица остаётся очищенной.
+        Формат каждой записи проверяется индивидуально: в таблицу попадают только
+        записи-списки длиной ровно четыре значения; записи иных форматов
+        (словари, строки, некорректные элементы) пропускаются, не ломая вывод
+        остальных записей.
+
+        Каждая корректная запись — список вида [timestamp, email, status, reason],
+        порядок значений совпадает с колонками таблицы.
+
+        Returns:
+            None
+        """
+        
         history_list = self.data.get_history()
 
         self.clear_tree(self.history_tree)
 
-        if not (isinstance(history_list, list) and len(history_list) > 0 and isinstance(history_list[0], list)):
-            return
-
         for row in history_list:
-            self.add_history_row(row)
+            if isinstance(row, list) and len(row) == 4:
+                self.add_history_row(row)
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.title("Email Validator")
-    # root.minsize(700, 400)
-    # root.geometry(f"{EmailValidatorGUI._WIDTH}x{EmailValidatorGUI._HEIGHT}")
-    # root.rowconfigure(2, weight=1)
-    # root.columnconfigure(0, weight=1)
     app = EmailValidatorGuiFunctions(root)
     root.mainloop()
-
-
