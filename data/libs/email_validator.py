@@ -90,9 +90,8 @@ class EmailValidator:
 
         # очищаем от ^ и $, чтобы не дублировать позже
         local_part = local_part.removeprefix('^').removesuffix('$')
-        # domain_part = domain_part.lstrip('^').rstrip('$')
         domain_part = domain_part.removeprefix('^').removesuffix('$')
-         
+
         # компилируем с явными границами
         self._regex_local = re.compile(r'^' + local_part + r'$')
         self._regex_domain = re.compile(r'^' + domain_part + r'$')
